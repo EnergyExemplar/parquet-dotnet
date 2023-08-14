@@ -12,45 +12,50 @@ using Parquet.Meta;
 using Parquet.Meta.Proto;
 
 namespace Parquet.File {
+
+    /// <summary>
+    /// Reader for Parquet data column
+    /// </summary>
     class DataColumnReader {
         private readonly DataField _dataField;
         private readonly Stream _inputStream;
         private readonly ColumnChunk _thriftColumnChunk;
-        private readonly SchemaElement? _chemaElement;
+        private readonly SchemaElement? _schemaElement;
         private readonly ThriftFooter _footer;
         private readonly ParquetOptions _options;
         private readonly DataColumnStatistics? _stats;
 
-        public DataColumnReader(
+        internal DataColumnReader(
            DataField dataField,
            Stream inputStream,
            ColumnChunk thriftColumnChunk,
+           DataColumnStatistics? stats,
            ThriftFooter footer,
            ParquetOptions? parquetOptions) {
             _dataField = dataField ?? throw new ArgumentNullException(nameof(dataField));
             _inputStream = inputStream ?? throw new ArgumentNullException(nameof(inputStream));
             _thriftColumnChunk = thriftColumnChunk ?? throw new ArgumentNullException(nameof(thriftColumnChunk));
+            _stats = stats;
             _footer = footer ?? throw new ArgumentNullException(nameof(footer));
             _options = parquetOptions ?? throw new ArgumentNullException(nameof(parquetOptions));
 
             dataField.EnsureAttachedToSchema(nameof(dataField));
 
-            _chemaElement = _footer.GetSchemaElement(_thriftColumnChunk);
-
-            // read stats as soon as possible
-            Statistics? st = _thriftColumnChunk.MetaData!.Statistics;
-            if(st != null) {
-
-                ParquetPlainEncoder.TryDecode(st.MinValue, _chemaElement!, _options, out object? min);
-                ParquetPlainEncoder.TryDecode(st.MaxValue, _chemaElement!, _options, out object? max);
-
-                _stats = new DataColumnStatistics(
-                    st.NullCount,
-                    st.DistinctCount,
-                    min, max);
-            }
+            _schemaElement = _footer.GetSchemaElement(_thriftColumnChunk);
         }
 
+        /// <summary>
+        /// Return data column statistics
+        /// </summary>
+        /// <returns>Data column statistics or null</returns>
+        public DataColumnStatistics? GetColumnStatistics() => _stats;
+
+        /// <summary>
+        /// Read entire column data
+        /// </summary>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>DataColumn object filled in with data</returns>
+        /// <exception cref="NotSupportedException">Unsupported page type</exception>
         public async Task<DataColumn> ReadAsync(CancellationToken cancellationToken = default) {
 
             // how many values are in column chunk, as there may be multiple data pages
@@ -76,13 +81,14 @@ namespace Parquet.File {
                         await ReadDataPageV2Async(ph, pc, totalValuesInChunk);
                         break;
                     default:
-                        throw new NotSupportedException($"can't read page type {ph.Type}"); ;
+                        throw new NotSupportedException($"can't read page type {ph.Type}");
                 }
             }
 
             // all the data is available here!
             DataColumn column = pc.Unpack();
-            if(_stats != null) column.Statistics = _stats;
+            if(_stats != null)
+                column.Statistics = _stats;
             return column;
         }
 
@@ -106,11 +112,11 @@ namespace Parquet.File {
                 data.AsSpan(0, ph.CompressedPageSize),
                 ph.UncompressedPageSize);
         }
-        
+
         private async Task<IronCompress.IronCompressResult> ReadPageDataV2Async(PageHeader ph) {
 
             int pageSize = ph.CompressedPageSize;
-            
+
             byte[] data = ArrayPool<byte>.Shared.Rent(pageSize);
 
             int totalBytesRead = 0, remainingBytes = pageSize;
@@ -136,12 +142,12 @@ namespace Parquet.File {
             Array dictionary = _dataField.CreateArray(ph.DictionaryPageHeader!.NumValues);
 
             ParquetPlainEncoder.Decode(dictionary, 0, ph.DictionaryPageHeader.NumValues,
-                   _chemaElement!, bytes.AsSpan(), out int dictionaryOffset);
+                   _schemaElement!, bytes.AsSpan(), out int dictionaryOffset);
 
             pc.AssignDictionary(dictionary);
         }
 
-        private long GetFileOffset() => 
+        private long GetFileOffset() =>
             // get the minimum offset, we'll just read pages in sequence as DictionaryPageOffset/Data_page_offset are not reliable
             new[]
                 {
@@ -196,8 +202,8 @@ namespace Parquet.File {
         private async Task ReadDataPageV2Async(PageHeader ph, PackedColumn pc, long maxValues) {
             if(ph.DataPageHeaderV2 == null) {
                 throw new ParquetException($"column '{_dataField.Path}' is missing data page header, file is corrupt");
-            } 
-            
+            }
+
             using IronCompress.IronCompressResult bytes = await ReadPageDataV2Async(ph);
             int dataUsed = 0;
 
@@ -230,7 +236,7 @@ namespace Parquet.File {
 
             int decompressedSize = ph.UncompressedPageSize - ph.DataPageHeaderV2.RepetitionLevelsByteLength -
                                    ph.DataPageHeaderV2.DefinitionLevelsByteLength;
-            
+
             IronCompress.IronCompressResult decompressedDataByes = Compressor.Decompress(
                 (CompressionMethod)(int)_thriftColumnChunk.MetaData.Codec,
                 bytes.AsSpan().Slice(dataUsed),
@@ -264,7 +270,7 @@ namespace Parquet.File {
                         ParquetPlainEncoder.Decode(plainData,
                             offset,
                             totalValuesInPage,
-                            _chemaElement!, src, out int read);
+                            _schemaElement!, src, out int read);
                         pc.MarkUsefulPlainData(read);
                     }
                     break;
@@ -281,7 +287,7 @@ namespace Parquet.File {
                 case Encoding.RLE: { // 3
                         Span<int> span = pc.AllocateOrGetDictionaryIndexes(totalValuesInPage);
                         int indexCount = RleBitpackedHybridEncoder.Decode(src,
-                            _chemaElement!.TypeLength ?? 0,
+                            _schemaElement!.TypeLength ?? 0,
                             src.Length, out int usedLength, span, totalValuesInPage);
                         pc.MarkUsefulDictionaryIndexes(indexCount);
                         pc.Checkpoint();
@@ -329,8 +335,7 @@ namespace Parquet.File {
                 for(int i = 0; i < maxReadCount; i++) {
                     dest[destOffset++] = 0;
                 }
-            }
-            else {
+            } else {
                 if(length != 0) {
                     destOffset += RleBitpackedHybridEncoder.Decode(s.Slice(1), bitWidth, length, out int usedLength, dest, maxReadCount);
                 }
