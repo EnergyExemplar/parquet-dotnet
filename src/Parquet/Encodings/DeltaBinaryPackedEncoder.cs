@@ -71,8 +71,8 @@ namespace Parquet.Encodings {
         }
 
         private static void WriteZigZagVarLong(Stream destination, long value) {
-            ulong temp = (ulong)((value >> 63) ^ (value << 1));
-            WriteUnsignedVarLong(destination, temp);
+            ulong zidZagEncoded = value.GetZigZagEncoded();
+            WriteUnsignedVarLong(destination, zidZagEncoded);
         }
         private static void WriteUnsignedVarLong(Stream stream, ulong value) {
             byte[] buffer = new byte[10];
