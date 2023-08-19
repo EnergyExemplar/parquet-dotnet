@@ -99,7 +99,6 @@ namespace Parquet.Extensions {
 
         #region Leading Zeros
         public static int NumberOfLeadingZerosInt(this int num) {
-            // HD, Count leading 0's
             if(num <= 0)
                 return num == 0 ? 32 : 0;
             int n = 31;
