@@ -134,6 +134,8 @@ namespace Parquet.Test.Encodings {
         [InlineData(1024 * 9)]
         [InlineData((1024 * 9) + 1)]
         [InlineData(10000)]
+        [InlineData(102541)]
+        [InlineData(3402541)]
         public void EncodeAndDecodeInt32_Random_Overflow(int total) {
             var r = new Random(0);
             int[] input = Enumerable.Range(0, total).Select(i => r.Next(int.MinValue, int.MaxValue)).ToArray();
@@ -162,6 +164,8 @@ namespace Parquet.Test.Encodings {
         [InlineData(1024 * 9)]
         [InlineData((1024 * 9) + 1)]
         [InlineData(10000)]
+        [InlineData(102541)]
+        [InlineData(3402541)]
         public void EncodeAndDecodeInt64_Random_Overflow(int total) {
             var r = new Random(0);
 
